@@ -16,47 +16,51 @@ public class TempTwitchIrcConnection implements Runnable {
 
     private final String channel;
     private final Logger logger;
-    private final SocketOutputStreamDto streamDto;
 
     public void run() {
-        try {
-            streamDto.getOutputStream().write(("JOIN " + channel + "\n").getBytes(StandardCharsets.UTF_8));
-            logger.info("check if socket Connected: " + streamDto.getSocket().isConnected());
-//            logger.info("check outputstream status: " + streamDto.getOutputStream());
-            readMessageFromOutputStream();
-        } catch (IOException e) {
-            logger.info("cannot connect to " + channel);
-            e.printStackTrace();
-        } finally {
+
+        while (true) {
+            SocketOutputStreamDto streamDto = null;
             try {
-                streamDto.getSocket().close();
-                streamDto.getOutputStream().close();
+                streamDto = CreateSocketOutputStream.builder().logger(logger).build().createSocketOutputStream();
+                streamDto.getOutputStream().write(("JOIN " + channel + "\n").getBytes(StandardCharsets.UTF_8));
+                logger.info("check if socket Connected: " + streamDto.getSocket().isConnected());
+                //            logger.info("check outputstream status: " + streamDto.getOutputStream());
+                readMessageFromOutputStream(streamDto);
             } catch (IOException e) {
-                logger.info(e.getMessage());
+                logger.info("cannot connect to " + channel + ", reconnection");
+            } finally {
+                try {
+                    assert streamDto != null;
+                    streamDto.getSocket().close();
+                    streamDto.getOutputStream().close();
+                } catch (IOException e) {
+                    logger.info(e.getMessage());
+                }
             }
         }
     }
 
 
-    public void readMessageFromOutputStream() throws IOException {
+    public void readMessageFromOutputStream(SocketOutputStreamDto streamDto) throws IOException {
         String line = null;
         InputStreamReader inputStreamReader = new InputStreamReader(streamDto.getSocket().getInputStream(), StandardCharsets.UTF_8);
         BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
 
         while ((line = bufferedReader.readLine()) != null) {  /* SocketException: Connection Reset occurs on this line*/
-            catchUnexpectedMessage(line);
+            catchUnexpectedMessage(line, streamDto);
         }
     }
 
-    public void catchUnexpectedMessage(String line) throws IOException {
+    public void catchUnexpectedMessage(String line, SocketOutputStreamDto streamDto) throws IOException {
         try {
-            kafkaOrIrcMultiplexer(line);
+            kafkaOrIrcMultiplexer(line, streamDto);
         } catch (ArrayIndexOutOfBoundsException e) {
             logger.info("I Caught exception " + e.getMessage() + " which is : " + line);
         }
     }
 
-    public void kafkaOrIrcMultiplexer(String line) throws IOException {
+    public void kafkaOrIrcMultiplexer(String line, SocketOutputStreamDto streamDto) throws IOException {
         if (line.split(" ")[0].equals("PING")) {
             streamDto.getOutputStream().write(("PONG\n").getBytes(StandardCharsets.UTF_8));
         } else {
